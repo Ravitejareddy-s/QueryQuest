@@ -1,0 +1,73 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LLM Chat Interface</title>
+    <link rel="stylesheet" href="{{ url_for('static', filename='style.css') }}">
+    <script src="https://cdn.jsdelivr.net/npm/marked/marked.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/dompurify@2.4.0/dist/purify.min.js"></script>
+</head>
+<body>
+    <div class="app-container">
+        <!-- Sidebar -->
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h2>Chat History</h2>
+                <button id="new-chat-btn" class="new-chat-btn">+ New Chat</button>
+            </div>
+            
+            <div class="model-selector">
+                <label for="provider-select">Provider:</label>
+                <select id="provider-select">
+                    <option value="">Select Provider</option>
+                </select>
+                
+                <label for="model-select">Model:</label>
+                <select id="model-select">
+                    <option value="">Select Model</option>
+                </select>
+            </div>
+            
+            <div class="chat-list" id="chat-list">
+                <!-- Chat history will be loaded here -->
+            </div>
+        </div>
+
+        <!-- Main Chat Area -->
+        <div class="main-content">
+            <div class="chat-header">
+                <h1 id="chat-title">New Chat</h1>
+                <button id="delete-chat-btn" class="delete-btn" style="display: none;">Delete Chat</button>
+            </div>
+            
+            <div class="chat-container">
+                <div class="messages" id="messages">
+                    <div class="welcome-message">
+                        <h2>Welcome to LLM Chat Interface</h2>
+                        <p>Select a provider and model to start chatting!</p>
+                    </div>
+                </div>
+                
+                <div class="input-container">
+                    <div class="input-wrapper">
+                        <textarea 
+                            id="message-input" 
+                            placeholder="Type your message here..." 
+                            rows="1"
+                        ></textarea>
+                        <button id="send-btn" disabled>
+                            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2">
+                                <line x1="22" y1="2" x2="11" y2="13"></line>
+                                <polygon points="22,2 15,22 11,13 2,9"></polygon>
+                            </svg>
+                        </button>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="{{ url_for('static', filename='script.js') }}"></script>
+</body>
+</html>
