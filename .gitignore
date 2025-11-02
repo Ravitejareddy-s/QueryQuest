@@ -1,3 +1,5 @@
 chat_history/
 credentials.json
 flask_app.log
+temp.ipynb
+text_notes/

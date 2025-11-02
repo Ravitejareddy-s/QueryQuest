@@ -12,6 +12,7 @@ app = Flask(__name__)
 
 # Ensure chat history directory exists
 os.makedirs('chat_history', exist_ok=True)
+os.makedirs('text_notes', exist_ok=True)
 
 def extract_text_from_file(file_path):
     """Extract text content from file"""
@@ -45,11 +46,21 @@ def load_credentials():
     except FileNotFoundError:
         return {}
 
-def save_chat_history(chat_id, messages, title="New Chat"):
+def load_behavior_instructions():
+    """Load behavior instructions from text_notes directory"""
+    behavior_file = os.path.join('text_notes', 'behavior.txt')
+    try:
+        with open(behavior_file, 'r', encoding='utf-8') as f:
+            return f.read().strip()
+    except FileNotFoundError:
+        return ""
+
+def save_chat_history(chat_id, messages, title="New Chat", folder_name='check'):
     """Save chat history to JSON file"""
     chat_data = {
         'id': chat_id,
         'title': title,
+        'folder_name': folder_name,
         'created_at': datetime.now().isoformat(),
         'updated_at': datetime.now().isoformat(),
         'messages': messages
@@ -78,6 +89,7 @@ def get_all_chats():
                         chats.append({
                             'id': chat['id'],
                             'title': chat['title'],
+                            'folder_name': chat.get('folder_name'),
                             'updated_at': chat['updated_at']
                         })
                 except:
@@ -91,10 +103,17 @@ def call_openai_api(messages, model, api_key, stream=False):
     """Call OpenAI API"""
     openai.api_key = api_key
     
+    # Add behavior instructions to messages
+    behavior_instructions = load_behavior_instructions()
+    if behavior_instructions:
+        enhanced_messages = [{'role': 'system', 'content': behavior_instructions}] + messages
+    else:
+        enhanced_messages = messages
+    
     try:
         response = openai.ChatCompletion.create(
             model=model,
-            messages=messages,
+            messages=enhanced_messages,
             temperature=0.7,
             max_tokens=2000,
             stream=stream
@@ -117,11 +136,21 @@ def call_anthropic_api(messages, model, api_key, stream=False):
     system_message = ""
     claude_messages = []
     
+    # Add behavior instructions
+    behavior_instructions = load_behavior_instructions()
+    
     for msg in messages:
         if msg['role'] == 'system':
             system_message = msg['content']
         else:
             claude_messages.append(msg)
+    
+    # Combine behavior instructions with existing system message
+    if behavior_instructions:
+        if system_message:
+            system_message = behavior_instructions + "\n\n" + system_message
+        else:
+            system_message = behavior_instructions
     
     data = {
         'model': model,
@@ -154,9 +183,16 @@ def call_coforge_api(messages, model, api_key, stream=False):
         "X-API-KEY": api_key
     }
     
+    # Add behavior instructions to messages
+    behavior_instructions = load_behavior_instructions()
+    if behavior_instructions:
+        enhanced_messages = [{'role': 'system', 'content': behavior_instructions}] + messages
+    else:
+        enhanced_messages = messages
+    
     data = {
         'model': model,
-        'messages': messages,
+        'messages': enhanced_messages,
         "temperature": 0.7,
         "max_tokens": 2000,
         "stream": stream
@@ -164,7 +200,7 @@ def call_coforge_api(messages, model, api_key, stream=False):
     
     try:
         response = requests.post(
-            'https://quasarmarket.coforge.com/aistudio-llmrouter-api/api/v2/chat/completions',
+            'https://quasarmarket.coforge.com/qag/llmrouter-api/v2/chat/completions',
             headers=headers,
             json=data,
             stream=stream
@@ -211,6 +247,7 @@ def send_message():
     data = request.json
     message = data.get('message')
     chat_id = data.get('chat_id')
+    folder_name = data.get('folder_name')
     selected_models = data.get('selected_models', [])
     
     # Handle backward compatibility for single model
@@ -231,6 +268,7 @@ def send_message():
         if chat_data:
             messages = chat_data['messages']
             title = chat_data['title']
+            folder_name = chat_data.get('folder_name')
         else:
             messages = []
             title = message[:50] + "..." if len(message) > 50 else message
@@ -238,6 +276,7 @@ def send_message():
         chat_id = str(uuid.uuid4())
         messages = []
         title = message[:50] + "..." if len(message) > 50 else message
+        # folder_name already defined from request data
     
     # Add user message
     messages.append({'role': 'user', 'content': message})
@@ -267,7 +306,7 @@ def send_message():
             messages.append({'role': 'assistant', 'content': response})
             
             # Save chat history
-            save_chat_history(chat_id, messages, title)
+            save_chat_history(chat_id, messages, title, folder_name)
             
             return jsonify({
                 'response': response,
@@ -340,7 +379,7 @@ def send_message():
         messages.append({'role': 'assistant', 'content': combined_response})
         
         # Save chat history
-        save_chat_history(chat_id, messages, title)
+        save_chat_history(chat_id, messages, title, folder_name)
         
         return jsonify({
             'responses': responses,
@@ -355,6 +394,7 @@ def stream_message():
     data = request.json
     message = data.get('message')
     chat_id = data.get('chat_id')
+    folder_name = data.get('folder_name')
     selected_models = data.get('selected_models', [])
     
     if not selected_models:
@@ -369,19 +409,25 @@ def stream_message():
     credentials = load_credentials()
     
     def generate():
+        # Use folder_name from outer scope
+        current_folder_name = folder_name
+        
         # Load existing chat or create new one
         if chat_id:
             chat_data = load_chat_history(chat_id)
             if chat_data:
                 messages = chat_data['messages']
                 title = chat_data['title']
+                current_folder_name = chat_data.get('folder_name')
             else:
                 messages = []
                 title = message[:50] + "..." if len(message) > 50 else message
+                # Keep current_folder_name from request data
         else:
             new_chat_id = str(uuid.uuid4())
             messages = []
             title = message[:50] + "..." if len(message) > 50 else message
+            # Keep current_folder_name from request data
             yield f"data: {json.dumps({'type': 'chat_id', 'chat_id': new_chat_id, 'title': title})}\n\n"
         
         # Add user message
@@ -440,7 +486,7 @@ def stream_message():
                 
                 # Add assistant response and save
                 messages.append({'role': 'assistant', 'content': full_response})
-                save_chat_history(chat_id or new_chat_id, messages, title)
+                save_chat_history(chat_id or new_chat_id, messages, title, current_folder_name)
                 yield f"data: {json.dumps({'type': 'done'})}\n\n"
                 
             except Exception as e:
@@ -516,7 +562,7 @@ def stream_message():
             ])
             
             messages.append({'role': 'assistant', 'content': combined_response})
-            save_chat_history(chat_id or new_chat_id, messages, title)
+            save_chat_history(chat_id or new_chat_id, messages, title, current_folder_name)
             yield f"data: {json.dumps({'type': 'done'})}\n\n"
     
     return Response(generate(), mimetype='text/event-stream')
@@ -532,6 +578,48 @@ def upload_files():
     
     return jsonify({'files': file_contents})
 
+@app.route('/api/chat/<chat_id>/folder', methods=['PUT'])
+def update_chat_folder(chat_id):
+    """Update chat folder"""
+    data = request.json
+    folder_name = data.get('folder_name')
+    
+    try:
+        chat_data = load_chat_history(chat_id)
+        if not chat_data:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        chat_data['folder_name'] = folder_name
+        chat_data['updated_at'] = datetime.now().isoformat()
+        
+        with open(f'chat_history/{chat_id}.json', 'w') as f:
+            json.dump(chat_data, f, indent=2)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/chat/<chat_id>/title', methods=['PUT'])
+def update_chat_title(chat_id):
+    """Update chat title"""
+    data = request.json
+    title = data.get('title')
+    
+    try:
+        chat_data = load_chat_history(chat_id)
+        if not chat_data:
+            return jsonify({'error': 'Chat not found'}), 404
+        
+        chat_data['title'] = title
+        chat_data['updated_at'] = datetime.now().isoformat()
+        
+        with open(f'chat_history/{chat_id}.json', 'w') as f:
+            json.dump(chat_data, f, indent=2)
+        
+        return jsonify({'success': True})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
 @app.route('/api/chat/<chat_id>', methods=['DELETE'])
 def delete_chat(chat_id):
     """Delete a chat"""
@@ -540,6 +628,72 @@ def delete_chat(chat_id):
         return jsonify({'success': True})
     except FileNotFoundError:
         return jsonify({'error': 'Chat not found'}), 404
+
+@app.route('/api/notes')
+def get_notes():
+    """Get all text notes"""
+    notes = []
+    if os.path.exists('text_notes'):
+        for filename in os.listdir('text_notes'):
+            if filename.endswith('.txt'):
+                filepath = os.path.join('text_notes', filename)
+                try:
+                    stat = os.stat(filepath)
+                    notes.append({
+                        'filename': filename,
+                        'name': filename[:-4],
+                        'modified': datetime.fromtimestamp(stat.st_mtime).isoformat()
+                    })
+                except:
+                    continue
+    notes.sort(key=lambda x: x['modified'], reverse=True)
+    return jsonify(notes)
+
+@app.route('/api/notes/<filename>')
+def get_note(filename):
+    """Get specific text note"""
+    if not filename.endswith('.txt'):
+        filename += '.txt'
+    filepath = os.path.join('text_notes', filename)
+    try:
+        with open(filepath, 'r', encoding='utf-8') as f:
+            content = f.read()
+        return jsonify({'content': content, 'filename': filename})
+    except FileNotFoundError:
+        return jsonify({'error': 'Note not found'}), 404
+
+@app.route('/api/notes', methods=['POST'])
+def save_note():
+    """Save text note"""
+    data = request.json
+    filename = data.get('filename', '').strip()
+    content = data.get('content', '')
+    if not filename:
+        return jsonify({'error': 'Filename required'}), 400
+    if not filename.endswith('.txt'):
+        filename += '.txt'
+    filename = "".join(c for c in filename if c.isalnum() or c in (' ', '-', '_', '.')).rstrip()
+    filepath = os.path.join('text_notes', filename)
+    try:
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+        return jsonify({'success': True, 'filename': filename})
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
+
+@app.route('/api/notes/<filename>', methods=['DELETE'])
+def delete_note(filename):
+    """Delete text note"""
+    if not filename.endswith('.txt'):
+        filename += '.txt'
+    filepath = os.path.join('text_notes', filename)
+    try:
+        os.remove(filepath)
+        return jsonify({'success': True})
+    except FileNotFoundError:
+        return jsonify({'error': 'Note not found'}), 404
+    except Exception as e:
+        return jsonify({'error': str(e)}), 500
 
 if __name__ == '__main__':
     app.run(debug=True, host='0.0.0.0', port=5000)

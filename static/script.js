@@ -6,11 +6,13 @@ class ChatInterface {
         this.isMultiMode = false;
         this.selectedModels = [];
         this.uploadedFiles = [];
+        this.currentNoteFilename = null;
         
         this.initializeElements();
         this.bindEvents();
         this.loadCredentials();
         this.loadChatHistory();
+        this.loadNotes();
         this.initializeFromURL();
     }
     
@@ -23,7 +25,8 @@ class ChatInterface {
         this.chatList = document.getElementById('chat-list');
         this.newChatBtn = document.getElementById('new-chat-btn');
         this.deleteChatBtn = document.getElementById('delete-chat-btn');
-        this.chatTitle = document.getElementById('chat-title');
+        this.chatTitleInput = document.getElementById('chat-title-input');
+        this.folderInput = document.getElementById('folder-input');
         this.scrollToBottomBtn = document.getElementById('scroll-to-bottom');
         
         // Multi-model elements
@@ -42,6 +45,16 @@ class ChatInterface {
         this.uploadFolderBtn = document.getElementById('upload-folder-btn');
         this.closeModalBtn = document.getElementById('close-modal');
         this.uploadedFilesContainer = document.getElementById('uploaded-files');
+        
+        // Notes elements
+        this.notesContainer = document.getElementById('notes-container');
+        this.notesList = document.getElementById('notes-list');
+        this.newNoteBtn = document.getElementById('new-note-btn');
+        this.noteFilename = document.getElementById('note-filename');
+        this.noteEditor = document.getElementById('note-editor');
+        this.saveNoteBtn = document.getElementById('save-note-btn');
+        this.deleteNoteBtn = document.getElementById('delete-note-btn');
+
     }
     
     bindEvents() {
@@ -62,6 +75,27 @@ class ChatInterface {
         this.uploadFolderBtn.addEventListener('click', () => this.selectFolder());
         this.closeModalBtn.addEventListener('click', () => this.hideUploadModal());
         this.fileInput.addEventListener('change', (e) => this.handleFileSelect(e));
+        
+        // Notes events
+        this.newNoteBtn.addEventListener('click', () => this.createNewNote());
+        this.saveNoteBtn.addEventListener('click', () => this.saveCurrentNote());
+        this.deleteNoteBtn.addEventListener('click', () => this.deleteCurrentNote());
+        
+        // Folder input events
+        this.folderInput.addEventListener('blur', () => this.updateChatFolder());
+        this.folderInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.folderInput.blur();
+            }
+        });
+        
+        // Title input events
+        this.chatTitleInput.addEventListener('blur', () => this.updateChatTitle());
+        this.chatTitleInput.addEventListener('keydown', (e) => {
+            if (e.key === 'Enter') {
+                this.chatTitleInput.blur();
+            }
+        });
         
         this.messageInput.addEventListener('input', () => this.adjustTextareaHeight());
         this.messageInput.addEventListener('keydown', (e) => {
@@ -266,21 +300,129 @@ class ChatInterface {
     renderChatList(chats) {
         this.chatList.innerHTML = '';
         
+        // Group chats by folder
+        const folders = {};
+        const ungroupedChats = [];
+        
         chats.forEach(chat => {
-            const chatItem = document.createElement('div');
-            chatItem.className = 'chat-item';
-            chatItem.dataset.chatId = chat.id;
-            
-            const date = new Date(chat.updated_at).toLocaleDateString();
-            
-            chatItem.innerHTML = `
-                <div class="chat-item-title">${chat.title}</div>
-                <div class="chat-item-date">${date}</div>
-            `;
-            
-            chatItem.addEventListener('click', () => this.loadChat(chat.id));
-            this.chatList.appendChild(chatItem);
+            if (chat.folder_name && chat.folder_name.trim()) {
+                const folderName = chat.folder_name.trim();
+                if (!folders[folderName]) {
+                    folders[folderName] = [];
+                }
+                folders[folderName].push(chat);
+            } else {
+                ungroupedChats.push(chat);
+            }
         });
+        
+        // Render folders first (at the top)
+        Object.keys(folders).sort().forEach(folderName => {
+            const folderDiv = this.createFolderGroup(folderName, folders[folderName]);
+            this.chatList.appendChild(folderDiv);
+        });
+        
+        // Render ungrouped chats as a collapsible section with day separations
+        if (ungroupedChats.length > 0) {
+            const ungroupedDiv = this.createUngroupedChatsSection(ungroupedChats);
+            this.chatList.appendChild(ungroupedDiv);
+        }
+    }
+    
+    createChatItem(chat) {
+        const chatItem = document.createElement('div');
+        chatItem.className = 'chat-item';
+        chatItem.dataset.chatId = chat.id;
+        
+        const date = new Date(chat.updated_at).toLocaleDateString();
+        
+        chatItem.innerHTML = `
+            <div class="chat-item-title">${chat.title}</div>
+            <div class="chat-item-date">${date}</div>
+        `;
+        
+        chatItem.addEventListener('click', () => this.loadChat(chat.id));
+        return chatItem;
+    }
+    
+    createUngroupedChatsSection(chats) {
+        const ungroupedGroup = document.createElement('div');
+        ungroupedGroup.className = 'folder-group ungrouped-section';
+        
+        const ungroupedHeader = document.createElement('div');
+        ungroupedHeader.className = 'folder-header collapsed';
+        ungroupedHeader.innerHTML = `
+            <span class="folder-icon">▼</span>
+            <span class="folder-name">Chat History</span>
+            <span class="folder-count">${chats.length}</span>
+        `;
+        
+        const ungroupedChats = document.createElement('div');
+        ungroupedChats.className = 'folder-chats collapsed';
+        
+        // Group chats by day
+        const chatsByDay = this.groupChatsByDay(chats);
+        
+        // Render each day group with separator
+        Object.keys(chatsByDay).forEach((dayKey, index) => {
+            if (index > 0) {
+                // Add day separator
+                const separator = document.createElement('div');
+                separator.className = 'day-separator';
+                ungroupedChats.appendChild(separator);
+            }
+            
+            // Add day header
+            const dayHeader = document.createElement('div');
+            dayHeader.className = 'day-header';
+            dayHeader.textContent = dayKey;
+            ungroupedChats.appendChild(dayHeader);
+            
+            // Add chats for this day
+            chatsByDay[dayKey].forEach(chat => {
+                ungroupedChats.appendChild(this.createChatItem(chat));
+            });
+        });
+        
+        ungroupedHeader.addEventListener('click', () => {
+            ungroupedHeader.classList.toggle('collapsed');
+            ungroupedChats.classList.toggle('collapsed');
+        });
+        
+        ungroupedGroup.appendChild(ungroupedHeader);
+        ungroupedGroup.appendChild(ungroupedChats);
+        
+        return ungroupedGroup;
+    }
+    
+    createFolderGroup(folderName, chats) {
+        const folderGroup = document.createElement('div');
+        folderGroup.className = 'folder-group';
+        
+        const folderHeader = document.createElement('div');
+        folderHeader.className = 'folder-header collapsed';
+        folderHeader.innerHTML = `
+            <span class="folder-icon">▼</span>
+            <span class="folder-name">${folderName}</span>
+            <span class="folder-count">${chats.length}</span>
+        `;
+        
+        const folderChats = document.createElement('div');
+        folderChats.className = 'folder-chats collapsed';
+        
+        chats.forEach(chat => {
+            folderChats.appendChild(this.createChatItem(chat));
+        });
+        
+        folderHeader.addEventListener('click', () => {
+            folderHeader.classList.toggle('collapsed');
+            folderChats.classList.toggle('collapsed');
+        });
+        
+        folderGroup.appendChild(folderHeader);
+        folderGroup.appendChild(folderChats);
+        
+        return folderGroup;
     }
     
     async loadChat(chatId) {
@@ -289,12 +431,14 @@ class ChatInterface {
             const chat = await response.json();
             
             this.currentChatId = chatId;
-            this.chatTitle.textContent = chat.title;
+            this.chatTitleInput.value = chat.title;
+            this.folderInput.value = chat.folder_name || '';
             this.deleteChatBtn.style.display = 'block';
             
             this.renderMessages(chat.messages);
             this.updateActiveChatItem(chatId);
             this.updateURL(chatId);
+            this.showChatInterface();
             
         } catch (error) {
             console.error('Error loading chat:', error);
@@ -416,7 +560,8 @@ class ChatInterface {
     
     startNewChat() {
         this.currentChatId = null;
-        this.chatTitle.textContent = 'New Chat';
+        this.chatTitleInput.value = 'New Chat';
+        this.folderInput.value = '';
         this.deleteChatBtn.style.display = 'none';
         this.messagesContainer.innerHTML = `
             <div class="welcome-message">
@@ -429,6 +574,7 @@ class ChatInterface {
             item.classList.remove('active');
         });
         this.updateURL(null);
+        this.showChatInterface();
     }
     
     async deleteCurrentChat() {
@@ -489,9 +635,11 @@ class ChatInterface {
     }
     
     streamResponse(message, selectedModels) {
+        const folderName = this.folderInput.value.trim() || null;
         const requestBody = {
             message: message,
             chat_id: this.currentChatId,
+            folder_name: folderName,
             selected_models: selectedModels
         };
         
@@ -616,7 +764,7 @@ class ChatInterface {
             case 'chat_id':
                 if (!this.currentChatId) {
                     this.currentChatId = data.chat_id;
-                    this.chatTitle.textContent = data.title;
+                    this.chatTitleInput.value = data.title;
                     this.deleteChatBtn.style.display = 'block';
                     this.updateURL(data.chat_id);
                 }
@@ -929,9 +1077,101 @@ class ChatInterface {
                 this.startNewChat();
                 this.messageInput.focus();
             }
+            
+            // Ctrl+S for save note
+            if ((e.ctrlKey || e.metaKey) && e.key === 's' && this.notesContainer.style.display !== 'none') {
+                e.preventDefault();
+                this.saveCurrentNote();
+            }
         });
     }
 
+    
+    async updateChatFolder() {
+        if (!this.currentChatId) return;
+        
+        const folderName = this.folderInput.value.trim() || null;
+        
+        try {
+            await fetch(`/api/chat/${this.currentChatId}/folder`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ folder_name: folderName })
+            });
+            
+            this.loadChatHistory();
+        } catch (error) {
+            console.error('Error updating chat folder:', error);
+        }
+    }
+    
+    async updateChatTitle() {
+        if (!this.currentChatId) return;
+        
+        const title = this.chatTitleInput.value.trim() || 'Untitled Chat';
+        
+        try {
+            await fetch(`/api/chat/${this.currentChatId}/title`, {
+                method: 'PUT',
+                headers: {
+                    'Content-Type': 'application/json'
+                },
+                body: JSON.stringify({ title: title })
+            });
+            
+            this.loadChatHistory();
+        } catch (error) {
+            console.error('Error updating chat title:', error);
+        }
+    }
+    
+    groupChatsByDay(chats) {
+        const chatsByDay = {};
+        
+        chats.forEach(chat => {
+            const date = new Date(chat.updated_at);
+            const today = new Date();
+            const yesterday = new Date(today);
+            yesterday.setDate(yesterday.getDate() - 1);
+            
+            let dayKey;
+            if (date.toDateString() === today.toDateString()) {
+                dayKey = 'Today';
+            } else if (date.toDateString() === yesterday.toDateString()) {
+                dayKey = 'Yesterday';
+            } else {
+                dayKey = date.toLocaleDateString('en-US', { 
+                    weekday: 'long', 
+                    year: 'numeric', 
+                    month: 'long', 
+                    day: 'numeric' 
+                });
+            }
+            
+            if (!chatsByDay[dayKey]) {
+                chatsByDay[dayKey] = [];
+            }
+            chatsByDay[dayKey].push(chat);
+        });
+        
+        // Sort days (Today first, then Yesterday, then chronological)
+        const sortedDays = Object.keys(chatsByDay).sort((a, b) => {
+            if (a === 'Today') return -1;
+            if (b === 'Today') return 1;
+            if (a === 'Yesterday') return -1;
+            if (b === 'Yesterday') return 1;
+            return new Date(b) - new Date(a);
+        });
+        
+        const sortedChatsByDay = {};
+        sortedDays.forEach(day => {
+            sortedChatsByDay[day] = chatsByDay[day];
+        });
+        
+        return sortedChatsByDay;
+    }
     
     isInputFocused() {
         const activeElement = document.activeElement;
@@ -940,6 +1180,120 @@ class ChatInterface {
             activeElement.tagName === 'TEXTAREA' ||
             activeElement.contentEditable === 'true'
         );
+    }
+    
+    async loadNotes() {
+        try {
+            const response = await fetch('/api/notes');
+            const notes = await response.json();
+            this.renderNotesList(notes);
+        } catch (error) {
+            console.error('Error loading notes:', error);
+        }
+    }
+    
+    renderNotesList(notes) {
+        this.notesList.innerHTML = '';
+        notes.forEach(note => {
+            const noteItem = document.createElement('div');
+            noteItem.className = 'note-item';
+            noteItem.textContent = note.name;
+            noteItem.addEventListener('click', () => this.loadNote(note.filename));
+            this.notesList.appendChild(noteItem);
+        });
+    }
+    
+    async loadNote(filename) {
+        try {
+            const response = await fetch(`/api/notes/${filename}`);
+            const note = await response.json();
+            this.currentNoteFilename = filename;
+            this.noteFilename.value = filename.replace('.txt', '');
+            this.noteEditor.value = note.content;
+            this.deleteNoteBtn.style.display = 'flex';
+            this.showNotesInterface();
+            this.updateActiveNoteItem(filename);
+        } catch (error) {
+            console.error('Error loading note:', error);
+        }
+    }
+    
+    createNewNote() {
+        this.currentNoteFilename = null;
+        this.noteFilename.value = '';
+        this.noteEditor.value = '';
+        this.deleteNoteBtn.style.display = 'none';
+        this.showNotesInterface();
+        this.noteFilename.focus();
+    }
+    
+    async saveCurrentNote() {
+        const filename = this.noteFilename.value.trim();
+        const content = this.noteEditor.value;
+        if (!filename) {
+            alert('Please enter a filename');
+            return;
+        }
+        
+        // If renaming existing note, delete old file first
+        if (this.currentNoteFilename && this.currentNoteFilename !== filename + '.txt') {
+            try {
+                await fetch(`/api/notes/${this.currentNoteFilename}`, { method: 'DELETE' });
+            } catch (error) {
+                console.error('Error deleting old note:', error);
+            }
+        }
+        
+        try {
+            const response = await fetch('/api/notes', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ filename, content })
+            });
+            const result = await response.json();
+            if (result.success) {
+                this.currentNoteFilename = result.filename;
+                this.loadNotes();
+            } else {
+                alert('Error saving note: ' + result.error);
+            }
+        } catch (error) {
+            console.error('Error saving note:', error);
+            alert('Error saving note');
+        }
+    }
+    
+    showNotesInterface() {
+        this.notesContainer.style.display = 'flex';
+    }
+    
+    showChatInterface() {
+        this.notesContainer.style.display = 'none';
+    }
+    
+    async deleteCurrentNote() {
+        if (!this.currentNoteFilename) return;
+        if (confirm('Are you sure you want to delete this note?')) {
+            try {
+                await fetch(`/api/notes/${this.currentNoteFilename}`, { method: 'DELETE' });
+                this.loadNotes();
+                this.createNewNote();
+            } catch (error) {
+                console.error('Error deleting note:', error);
+                alert('Error deleting note');
+            }
+        }
+    }
+    
+    updateActiveNoteItem(filename) {
+        document.querySelectorAll('.note-item').forEach(item => {
+            item.classList.remove('active');
+        });
+        const activeItem = Array.from(document.querySelectorAll('.note-item'))
+            .find(item => item.textContent === filename.replace('.txt', ''));
+        if (activeItem) {
+            activeItem.classList.add('active');
+        }
     }
 }
 
